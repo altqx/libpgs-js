@@ -2,26 +2,34 @@ export class PgsRendererHelper {
     /**
      * Returns the array index position for the previous timestamp position from the given array.
      * Returns -1 if the given time is outside the timestamp range.
+     * Uses binary search for O(log n) performance instead of linear O(n) search.
      * @param time The timestamp to check in seconds.
      * @param pgsTimestamps The list of available PGS timestamps.
      */
     public static getIndexFromTimestamps(time: number, pgsTimestamps: number[]): number {
-        const pgsTime = time * 1000 * 90; // Convert to PGS time
+        const len = pgsTimestamps.length;
+        if (len === 0) return -1;
 
-        // All position before and after the available timestamps are invalid (-1).
-        let index = -1;
-        if (pgsTimestamps.length > 0 && pgsTime < pgsTimestamps[pgsTimestamps.length - 1]) {
+        const pgsTime = time * 90000; // Convert to PGS time (90kHz clock)
 
-            // Find the last subtitle index for the given time stamp
-            for (const pgsTimestamp of pgsTimestamps) {
+        // Outside valid range
+        if (pgsTime >= pgsTimestamps[len - 1]) return -1;
+        if (pgsTime < pgsTimestamps[0]) return -1;
 
-                if (pgsTimestamp > pgsTime) {
-                    break;
-                }
-                index++;
+        // Binary search to find the largest index where timestamp <= pgsTime
+        let left = 0;
+        let right = len - 1;
+
+        while (left < right) {
+            // Use unsigned right shift to avoid overflow and get floor division
+            const mid = (left + right + 1) >>> 1;
+            if (pgsTimestamps[mid] <= pgsTime) {
+                left = mid;
+            } else {
+                right = mid - 1;
             }
         }
 
-        return index;
+        return left;
     }
 }

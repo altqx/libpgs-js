@@ -15,20 +15,22 @@ test('load and render full pgs subtitle', async () => {
 
 
     const dataSup = fs.readFileSync(`${__dirname}/files/test.sup`);
+    // Convert Buffer to ArrayBuffer using Uint8Array for proper typing
+    const uint8Array = new Uint8Array(dataSup);
 
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d")!;
     const renderer = new Renderer(canvas);
     const pgs = new Pgs();
-    await pgs.loadFromBuffer(dataSup);
+    await pgs.loadFromBuffer(uint8Array.buffer as ArrayBuffer);
 
     // Helper function to render and compare the image in the test directory.
     // Since we only set pixel data and don't use font rendering this should be deterministic on every machine.
-    const expectImageAtTimestamp = (filename: string, timestamp: number) => {
+    const expectImageAtTimestamp = async (filename: string, timestamp: number) => {
         const expectedData = fs.readFileSync(`${__dirname}/files/${filename}`);
 
         const subtitleData = pgs.getSubtitleAtTimestamp(timestamp);
-        renderer.draw(subtitleData);
+        await renderer.draw(subtitleData);
         const resultData = context.getImageData(0, 0, canvas.width, canvas.height).data;
 
         // Compare the resulted pixel data with a pre-calculated expected pixel data.
@@ -38,7 +40,7 @@ test('load and render full pgs subtitle', async () => {
         }
     }
 
-    expectImageAtTimestamp('test-0.rgba', 1.5);
-    expectImageAtTimestamp('test-1.rgba', 2.5);
-    expectImageAtTimestamp('test-2.rgba', 3.5);
+    await expectImageAtTimestamp('test-0.rgba', 1.5);
+    await expectImageAtTimestamp('test-1.rgba', 2.5);
+    await expectImageAtTimestamp('test-2.rgba', 3.5);
 });

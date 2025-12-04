@@ -21,6 +21,47 @@ export interface PgsLoadOptions {
 }
 
 /**
+ * Simple LRU cache for subtitle data.
+ */
+class SubtitleCache {
+    private readonly maxSize: number;
+    private readonly cache: Map<number, SubtitleData | undefined>;
+    
+    constructor(maxSize: number = 8) {
+        this.maxSize = maxSize;
+        this.cache = new Map();
+    }
+    
+    get(index: number): SubtitleData | undefined | null {
+        const value = this.cache.get(index);
+        if (value !== undefined) {
+            // Move to end (most recently used)
+            this.cache.delete(index);
+            this.cache.set(index, value);
+            return value;
+        }
+        return null; // null means not in cache, undefined means cached empty result
+    }
+    
+    set(index: number, value: SubtitleData | undefined): void {
+        if (this.cache.has(index)) {
+            this.cache.delete(index);
+        } else if (this.cache.size >= this.maxSize) {
+            // Remove oldest entry (first key)
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey !== undefined) {
+                this.cache.delete(firstKey);
+            }
+        }
+        this.cache.set(index, value);
+    }
+    
+    clear(): void {
+        this.cache.clear();
+    }
+}
+
+/**
  * The PGS subtitle data class. This can load and cache sup files from a buffer or url.
  * It can also build image data for a given timestamp or timestamp index.
  */
@@ -35,6 +76,11 @@ export class Pgs {
      * The PGS timestamps when a display set with the same index is presented.
      */
     public updateTimestamps: number[] = [];
+
+    /**
+     * LRU cache for computed subtitle data.
+     */
+    private subtitleCache = new SubtitleCache(8);
 
     /**
      * Loads the subtitle file from the given url.
@@ -77,7 +123,7 @@ export class Pgs {
     public async loadFromReader(reader: BinaryReader, options?: PgsLoadOptions): Promise<void> {
         this.displaySets = [];
         this.updateTimestamps = [];
-        this.cachedSubtitleData = undefined;
+        this.subtitleCache.clear();
 
         let lastUpdateTime = performance.now();
 
@@ -91,7 +137,7 @@ export class Pgs {
             // For async loading, we support frequent progress updates. Sending one update for every new display set
             // would be too much. Instead, we use a one-second threshold.
             if (options?.onProgress) {
-                let now = performance.now();
+                const now = performance.now();
                 if (now > lastUpdateTime + 1000) {
                     lastUpdateTime = now;
                     options.onProgress();
@@ -105,20 +151,17 @@ export class Pgs {
         }
     }
 
-    // Information about the next compiled subtitle data. This is calculated after the current subtitle is rendered.
-    // So by the time the next subtitle change is requested, this should already be completed.
-    private cachedSubtitleData?: { index: number, data: SubtitleData | undefined };
-
-
     /**
      * Pre-compiles and caches the subtitle data for the given index.
-     * This will speed up the next call to `buildSubtitleDataAtIndex` with the same index.
+     * This will speed up the next call to `getSubtitleAtIndex` with the same index.
      * @param index The index of the display set to cache.
      */
-    public cacheSubtitleAtIndex(index: number) {
-        // Pre-calculating the next subtitle, so it is ready whenever the next subtitle change is requested.
-        const nextSubtitleData = this.getSubtitleAtIndex(index);
-        this.cachedSubtitleData = { index: index, data: nextSubtitleData };
+    public cacheSubtitleAtIndex(index: number): void {
+        // Only cache if not already cached
+        if (this.subtitleCache.get(index) === null) {
+            const subtitleData = this.computeSubtitleAtIndex(index);
+            this.subtitleCache.set(index, subtitleData);
+        }
     }
 
     /**
@@ -131,21 +174,33 @@ export class Pgs {
     }
 
     /**
-     * Pre-compiles the required subtitle data (windows and pixel data) for the frame at the given index.
+     * Gets the subtitle data at the given index, using cache when available.
      * @param index The index of the display set to render.
      */
     public getSubtitleAtIndex(index: number): SubtitleData | undefined {
-        // Check if this index was already cached.
-        if (this.cachedSubtitleData && this.cachedSubtitleData.index === index) {
-            return this.cachedSubtitleData.data;
+        // Check cache first
+        const cached = this.subtitleCache.get(index);
+        if (cached !== null) {
+            return cached;
         }
+        
+        // Compute and cache
+        const result = this.computeSubtitleAtIndex(index);
+        this.subtitleCache.set(index, result);
+        return result;
+    }
 
+    /**
+     * Pre-compiles the required subtitle data (windows and pixel data) for the frame at the given index.
+     * @param index The index of the display set to render.
+     */
+    private computeSubtitleAtIndex(index: number): SubtitleData | undefined {
         if (index < 0 || index >= this.displaySets.length) {
-            return;
+            return undefined;
         }
 
         const displaySet = this.displaySets[index];
-        if (!displaySet.presentationComposition) return;
+        if (!displaySet.presentationComposition) return undefined;
 
         // We need to collect all valid objects and palettes up to this point. PGS can update and reuse elements from
         // previous display sets. The `compositionState` defines if the previous elements should be cleared.
@@ -156,18 +211,18 @@ export class Pgs {
         const ctxWindows: WindowDefinition[] = [];
         let curIndex = index;
         while (curIndex >= 0) {
-            const displaySet = this.displaySets[curIndex];
+            const currentSet = this.displaySets[curIndex];
             // Because we are moving backwards, we would end up with the inverted array order.
             // We'll use `unshift` to add these elements to the front of the array.
-            ctxObjects.unshift(...displaySet.objectDefinitions);
-            ctxPalettes.unshift(...displaySet.paletteDefinitions);
+            ctxObjects.unshift(...currentSet.objectDefinitions);
+            ctxPalettes.unshift(...currentSet.paletteDefinitions);
             // `flatMap` is available since Chrome 69.
-            for (const windowDefinition of displaySet.windowDefinitions) {
+            for (const windowDefinition of currentSet.windowDefinitions) {
                 ctxWindows.unshift(...windowDefinition.windows);
             }
 
             // Any other state that `0` frees all previous segments, so we can stop here.
-            if (this.displaySets[curIndex].presentationComposition?.compositionState !== 0) {
+            if (currentSet.presentationComposition?.compositionState !== 0) {
                 break;
             }
 
@@ -175,14 +230,14 @@ export class Pgs {
         }
 
         // Find the used palette for this composition.
-        let palette = ctxPalettes
+        const palette = ctxPalettes
             .find(w => w.id === displaySet.presentationComposition?.paletteId);
-        if (!palette) return;
+        if (!palette) return undefined;
 
         const compositionData: SubtitleCompositionData[] = [];
         for (const compositionObject of displaySet.presentationComposition.compositionObjects) {
             // Find the window to draw on.
-            let window = ctxWindows.find(w => w.id === compositionObject.windowId);
+            const window = ctxWindows.find(w => w.id === compositionObject.windowId);
             if (!window) continue;
 
             // Builds the subtitle.
@@ -192,7 +247,7 @@ export class Pgs {
             }
         }
 
-        if (compositionData.length === 0) return;
+        if (compositionData.length === 0) return undefined;
 
         return new SubtitleData(displaySet.presentationComposition.width, displaySet.presentationComposition.height,
             compositionData);

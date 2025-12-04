@@ -26,7 +26,7 @@ export abstract class PgsRendererInWorker extends PgsRendererImpl {
         this.worker.postMessage({
             op: 'loadFromBuffer',
             buffer: buffer,
-        });
+        }, [buffer]);
     }
 
     /**
@@ -60,6 +60,7 @@ export abstract class PgsRendererInWorker extends PgsRendererImpl {
      * Disposes the renderer and terminates the worker.
      */
     public dispose(): void {
+        this.worker.postMessage({ op: 'dispose' });
         this.worker.terminate();
     }
 }

@@ -1,8 +1,4 @@
-// Polyfills
-import "core-js/stable/array/find";
-import "core-js/stable/promise";
-import "whatwg-fetch";
-
+// Modern browsers (2020+) no longer need polyfills for Promise, Array.find, or fetch
 import {Renderer} from "./renderer";
 import {Pgs} from "./pgs";
 
@@ -60,9 +56,8 @@ onmessage = (e: MessageEvent) => {
         case 'render': {
             const index: number = e.data.index;
             const subtitleData = pgs.getSubtitleAtIndex(index);
-            requestAnimationFrame(() => {
-                renderer?.draw(subtitleData);
-            });
+            // Use async draw for ImageBitmap support
+            renderer?.draw(subtitleData);
             pgs.cacheSubtitleAtIndex(index + 1);
             break;
         }
@@ -80,6 +75,13 @@ onmessage = (e: MessageEvent) => {
             })
 
             pgs.cacheSubtitleAtIndex(index + 1);
+            break;
+        }
+        
+        // Cleanup resources
+        case 'dispose': {
+            renderer?.dispose();
+            renderer = undefined;
             break;
         }
     }

@@ -1,5 +1,5 @@
 /**
- * A simple rectangular class.
+ * A simple rectangular class optimized for minimal branching.
  */
 export class Rect {
     /**
@@ -30,7 +30,7 @@ export class Rect {
     /**
      * Clears the rectangular.
      */
-    public reset() {
+    public reset(): void {
         this.empty = true;
         this.x = 0;
         this.y = 0;
@@ -39,13 +39,13 @@ export class Rect {
     }
 
     /**
-     * Grows this rectangular area to include the given area.
+     * Sets the rectangular area directly.
      * @param x The x coordinate of the new area.
      * @param y The y coordinate of the new area.
      * @param width The width of the new area. Negative values are not supported.
      * @param height The height of the new area. Negative values are not supported.
      */
-    public set(x: number, y: number, width: number = 0, height: number = 0) {
+    public set(x: number, y: number, width: number = 0, height: number = 0): void {
         this.empty = false;
         this.x = x;
         this.y = y;
@@ -55,12 +55,13 @@ export class Rect {
 
     /**
      * Grows this rectangular area to include the given area.
+     * Optimized using Math.min/max which modern JS engines inline efficiently.
      * @param x The x coordinate of the new area to include.
      * @param y The y coordinate of the new area to include.
      * @param width The width of the new area to include. Negative values are not supported.
      * @param height The height of the new area to include. Negative values are not supported.
      */
-    public union(x: number, y: number, width: number = 0, height: number = 0) {
+    public union(x: number, y: number, width: number = 0, height: number = 0): void {
         if (this.empty) {
             // First sub-rect added
             this.empty = false;
@@ -69,11 +70,22 @@ export class Rect {
             this.width = width;
             this.height = height;
         } else {
-            // Grow the rectangular area to fit the new sub-rect
-            if (x < this.x) { this.width += this.x - x; this.x = x; }
-            if (y < this.y) { this.height += this.y - y; this.y = y; }
-            if (x + width > this.x + this.width) { this.width = x + width - this.x; }
-            if (y + height > this.y + this.height) { this.height = y + height - this.y; }
+            // Calculate right and bottom edges
+            const right = x + width;
+            const bottom = y + height;
+            const thisRight = this.x + this.width;
+            const thisBottom = this.y + this.height;
+            
+            // Use Math.min/max - modern JIT compilers optimize these well
+            const newX = Math.min(this.x, x);
+            const newY = Math.min(this.y, y);
+            const newRight = Math.max(thisRight, right);
+            const newBottom = Math.max(thisBottom, bottom);
+            
+            this.x = newX;
+            this.y = newY;
+            this.width = newRight - newX;
+            this.height = newBottom - newY;
         }
     }
 }
